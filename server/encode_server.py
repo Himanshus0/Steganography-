@@ -13,21 +13,10 @@ def message_to_binary(message):
 def encode_image(image_path, message, output_path):
     try:
         img = Image.open(image_path).convert('RGB')
-        
-        # Add a subtle visual indicator for the developer that something is hidden here
-        # Doing this BEFORE LSB encoding ensures we don't accidentally corrupt the hidden data payload!
-        from PIL import ImageDraw
-        draw = ImageDraw.Draw(img)
-        w, h = img.size
-        # Make a visible red square in the top-right corner (size is 3% of width, minimum 20px)
-        box_size = max(20, int(w * 0.03))
-        draw.rectangle([w - box_size - 10, 10, w - 10, 10 + box_size], fill=(255, 0, 0))
-        
     except Exception as e:
         print(f"Cannot open image: {e}", file=sys.stderr)
         sys.exit(1)
 
-    pixels = img.load()
     # Delimiter: 16-bit sequence 1111111111111110
     binary_message = message_to_binary(message) + "1111111111111110"
     width, height = img.size
@@ -36,10 +25,36 @@ def encode_image(image_path, message, output_path):
         print("Message too long for this image.", file=sys.stderr)
         sys.exit(1)
 
+    # --- Draw highly visible marker around the hidden region! ---
+    # Because for short messages, the tinted pixels are microscopically small
+    pixels_needed = (len(binary_message) + 2) // 3
+    y_end = (pixels_needed - 1) // width
+    x_end = (pixels_needed - 1) % width
+    
+    from PIL import ImageDraw
+    draw = ImageDraw.Draw(img)
+    # Ensure the box is at least 30x30 so it's fully visible even for 1-letter messages
+    box_right = max(30, width - 1 if y_end > 0 else x_end + 15)
+    box_bottom = max(30, y_end + 15)
+    
+    # Draw a bright red, 5-pixel thick bounding box outlining where the data is!
+    draw.rectangle([0, 0, box_right, box_bottom], outline=(255, 0, 0), width=5)
+    # -----------------------------------------------------------
+
+    pixels = img.load()
+
     data_index = 0
     for y in range(height):
         for x in range(width):
             r, g, b = pixels[x, y]
+            
+            # Watermark exactly where the message is hidden!
+            if data_index < len(binary_message):
+                # Apply a neon-green overlay to make the data trace immediately obvious
+                r = int(r * 0.3)
+                g = min(255, int(g * 0.3 + 200)) # Neon green
+                b = int(b * 0.3)
+
             if data_index < len(binary_message):
                 r = (r & ~1) | int(binary_message[data_index]); data_index += 1
             if data_index < len(binary_message):
